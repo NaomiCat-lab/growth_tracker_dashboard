@@ -9,55 +9,62 @@ index.html
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, query, addDoc, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+  import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+  import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global state for Firebase
-        window.firebaseStore = { 
-            db: null, 
-            auth: null, 
-            user: null, 
-            appId: typeof __app_id !== 'undefined' ? __app_id : 'default-app-id' 
-        };
+  // Global state for Firebase
+  window.firebaseStore = {
+    db: null,
+    auth: null,
+    user: null,
+    appId: "growth-tracker-e7b50"
+  };
 
-        const firebaseConfig = {
-  apiKey: "AIzaSyDHktuKfyQf090Gx0bgyjD1V1YdUSQT1cU",
-  authDomain: "growth-tracker-e7b50.firebaseapp.com",
-  projectId: "growth-tracker-e7b50",
-  storageBucket: "growth-tracker-e7b50.firebasestorage.app",
-  messagingSenderId: "56700551480",
-  appId: "1:56700551480:web:250716a346582094f241cd",
-  measurementId: "G-8HGFLTLGEE"
-};
-        const app = initializeApp(firebaseConfig);
-        window.firebaseStore.auth = getAuth(app);
-        window.firebaseStore.db = getFirestore(app);
+  const firebaseConfig = {
+    apiKey: "AIzaSyDHktuKfyQf090Gx0bgyjD1V1YdUSQT1cU",
+    authDomain: "growth-tracker-e7b50.firebaseapp.com",
+    projectId: "growth-tracker-e7b50",
+    storageBucket: "growth-tracker-e7b50.firebasestorage.app",
+    messagingSenderId: "56700551480",
+    appId: "1:56700551480:web:250716a346582094f241cd",
+    measurementId: "G-8HGFLTLGEE"
+  };
 
-        const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(window.firebaseStore.auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(window.firebaseStore.auth);
-                }
-            } catch (error) {
-                console.error("Authentication failed:", error);
-            }
-        };
+  const app = initializeApp(firebaseConfig);
+  window.firebaseStore.auth = getAuth(app);
+  window.firebaseStore.db = getFirestore(app);
 
-        onAuthStateChanged(window.firebaseStore.auth, (user) => {
-            window.firebaseStore.user = user;
-            if (user) {
-                const statusEl = document.getElementById('cloud-status');
-                if (statusEl) {
-                    statusEl.innerText = "Cloud Sync Active";
-                    statusEl.classList.replace('text-stone-400', 'text-green-500');
-                }
-                startDataSync(user.uid);
-            }
-        });
+  const initAuth = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(window.firebaseStore.auth, provider);
+    } catch (error) {
+      console.error("Authentication failed:", error);
+      alert("登入失敗：" + (error?.message || error));
+    }
+  };
+
+  onAuthStateChanged(window.firebaseStore.auth, (user) => {
+    window.firebaseStore.user = user;
+
+    const statusEl = document.getElementById("cloud-status");
+    if (statusEl) {
+      if (user) {
+        statusEl.innerText = "Cloud Sync Active";
+        statusEl.classList.replace("text-stone-400", "text-green-500");
+      } else {
+        statusEl.innerText = "Not signed in";
+        statusEl.classList.replace("text-green-500", "text-stone-400");
+      }
+    }
+
+    if (user) startDataSync(user.uid);
+  });
+
+  initAuth();
+</script>
 
         initAuth();
     </script>
