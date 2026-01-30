@@ -1,0 +1,411 @@
+index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Growth Tracker | Cloud Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, query, addDoc, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global state for Firebase
+        window.firebaseStore = { 
+            db: null, 
+            auth: null, 
+            user: null, 
+            appId: typeof __app_id !== 'undefined' ? __app_id : 'default-app-id' 
+        };
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        window.firebaseStore.auth = getAuth(app);
+        window.firebaseStore.db = getFirestore(app);
+
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(window.firebaseStore.auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(window.firebaseStore.auth);
+                }
+            } catch (error) {
+                console.error("Authentication failed:", error);
+            }
+        };
+
+        onAuthStateChanged(window.firebaseStore.auth, (user) => {
+            window.firebaseStore.user = user;
+            if (user) {
+                const statusEl = document.getElementById('cloud-status');
+                if (statusEl) {
+                    statusEl.innerText = "Cloud Sync Active";
+                    statusEl.classList.replace('text-stone-400', 'text-green-500');
+                }
+                startDataSync(user.uid);
+            }
+        });
+
+        initAuth();
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,700&display=swap');
+        
+        :root { 
+            --bg-warm: #FDFBF7; 
+            --accent-sage: #B7C39C; 
+            --accent-orange: #F97316; 
+            --text-main: #3C4043; 
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-warm); 
+            color: var(--text-main); 
+            overflow-x: hidden; 
+            -webkit-tap-highlight-color: transparent; 
+        }
+
+        .serif { font-family: 'Playfair Display', serif; }
+
+        /* Strict Chart Container Styling per Requirements */
+        .chart-container { 
+            position: relative; 
+            width: 100%; 
+            max-width: 600px; 
+            margin-left: auto; 
+            margin-right: auto; 
+            height: 260px; 
+            max-height: 300px; 
+        }
+
+        @media (min-width: 768px) { 
+            .chart-container { 
+                height: 320px; 
+            } 
+        }
+        
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        
+        @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .pulse { animation: pulse-soft 2s infinite; }
+
+        /* Hide scrollbar for cleaner mobile UI */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+
+    <!-- Chosen Palette: Warm Neutrals (Stone, Cream) with Sage Green and Burnt Orange accents for a restorative feel. -->
+    <!-- Application Structure Plan: 
+         - Mobile-First Layout: Sticky top header for status, fixed bottom nav for primary views.
+         - 4 Core Views:
+           1. Today (Home): Current task context (auto-detected) + Quick Wellness Log.
+           2. Schedule (Timeline): Visual list of the 8-5 plan, auto-highlighting the active block.
+           3. Progress (Stats): Charts for habits and energy/stress balance.
+           4. Logs (Input): Tabbed interface for PM reflections and Job search tracking.
+         - Interaction: 
+           - Auto-detection of time to show "Now Focusing On".
+           - Tap-to-log for wellness and habits.
+           - Real-time cloud sync with visual feedback.
+    -->
+    <!-- Visualization & Content Choices: 
+         - Timeline: Linear list to show flow of the day. Goal: Inform/Organize.
+         - Wellness Chart (Line): Compare Stress vs Energy over the week. Goal: Relationships/Change.
+         - Consistency Chart (Bar): Visualize habit streaks. Goal: Compare/Motivate.
+         - Habit Grid: Interactive toggle cards. Goal: Organize/Action.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Status Bar / Header -->
+    <nav class="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-stone-100 px-6 py-4 flex justify-between items-center">
+        <div>
+            <span id="cloud-status" class="text-[10px] font-bold text-stone-400 uppercase tracking-widest block transition-colors">Connecting Cloud...</span>
+            <h1 class="text-xl font-bold text-stone-800 serif italic" id="header-view-title">Dashboard</h1>
+        </div>
+        <div id="session-tag" class="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 pulse">
+            ● <span id="current-session-label">LIVE</span>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto pb-32 px-4 pt-6 max-w-4xl mx-auto w-full no-scrollbar">
+        
+        <!-- View 1: TODAY (Home) -->
+        <div id="view-home" class="space-y-6">
+            <!-- Context Card -->
+            <section class="bg-white rounded-3xl p-6 shadow-sm border border-stone-50">
+                <p class="text-sm text-stone-500 mb-4">Welcome to your restorative space. Here is your current focus.</p>
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl bg-stone-50 border border-stone-100 shadow-inner">🌿</div>
+                    <div>
+                        <h2 class="text-xs text-stone-400 font-bold uppercase tracking-wide">Right Now</h2>
+                        <p class="text-2xl font-bold text-stone-800 serif" id="active-task-name">Loading...</p>
+                    </div>
+                </div>
+                <div class="bg-stone-50 rounded-2xl p-4 border border-stone-100 border-dashed">
+                    <p class="text-sm text-stone-600 leading-relaxed italic" id="active-task-desc">"Stay present. Your growth is a journey, not a race."</p>
+                </div>
+            </section>
+
+            <!-- Quick Wellness Logger -->
+            <section class="bg-stone-900 rounded-3xl p-7 text-white shadow-xl">
+                <h3 class="font-bold mb-4 text-stone-300 uppercase text-xs tracking-widest">How are you feeling?</h3>
+                <div class="flex justify-between items-center gap-3">
+                    <button onclick="logWellness(1, 9)" class="flex-1 py-4 bg-stone-800 rounded-2xl text-xs font-bold hover:bg-stone-700 active:scale-95 transition-all">Restored</button>
+                    <button onclick="logWellness(2, 6)" class="flex-1 py-4 bg-stone-800 rounded-2xl text-xs font-bold hover:bg-stone-700 active:scale-95 transition-all">Balanced</button>
+                    <button onclick="logWellness(3, 3)" class="flex-1 py-4 bg-orange-600 rounded-2xl text-xs font-bold hover:bg-orange-500 active:scale-95 transition-all">Tired</button>
+                </div>
+            </section>
+        </div>
+
+        <!-- View 2: SCHEDULE -->
+        <div id="view-schedule" class="hidden space-y-4">
+            <div class="flex justify-between items-end px-2 mb-2">
+                <h2 class="text-xl font-bold text-stone-800 serif">Daily Timeline</h2>
+                <span class="text-xs text-stone-400">8:00 - 17:00</span>
+            </div>
+            <div id="timeline-container" class="space-y-3"></div>
+        </div>
+
+        <!-- View 3: PROGRESS -->
+        <div id="view-progress" class="hidden space-y-6">
+            <section class="bg-white rounded-3xl p-6 shadow-sm">
+                <h3 class="font-bold text-stone-800 mb-4 text-xs uppercase tracking-widest">Habit Consistency</h3>
+                <div class="chart-container"><canvas id="consistencyChart"></canvas></div>
+            </section>
+            <section class="bg-white rounded-3xl p-6 shadow-sm">
+                <h3 class="font-bold text-stone-800 mb-4 text-xs uppercase tracking-widest">Balance Flow (Energy vs Stress)</h3>
+                <div class="chart-container"><canvas id="wellnessChart"></canvas></div>
+            </section>
+            <div class="px-2 mt-8"><h3 class="font-bold text-stone-800 mb-4 text-lg serif italic">My Daily Rituals</h3></div>
+            <div class="space-y-4" id="mobile-habit-list"></div>
+        </div>
+
+        <!-- View 4: LOGS -->
+        <div id="view-logs" class="hidden space-y-6">
+            <div class="flex gap-2 bg-stone-100 p-1 rounded-2xl mb-4">
+                <button onclick="toggleLogType('pm')" id="log-btn-pm" class="flex-1 py-3 rounded-xl text-[10px] font-bold bg-white text-stone-800 shadow-sm transition-all">GROWTH INSIGHTS</button>
+                <button onclick="toggleLogType('job')" id="log-btn-job" class="flex-1 py-3 rounded-xl text-[10px] font-bold text-stone-400 transition-all">CAREER OPPTS</button>
+            </div>
+
+            <!-- PM Logs -->
+            <div id="pm-log-section" class="space-y-4">
+                <div class="bg-white p-6 rounded-3xl border border-stone-100 shadow-sm">
+                    <h4 class="text-xs font-bold text-stone-400 mb-4 uppercase tracking-widest">A New Discovery...</h4>
+                    <input type="text" id="log-input-1" placeholder="What methodology did you study?" class="w-full bg-stone-50 p-4 rounded-2xl mb-3 text-sm focus:outline-none border-2 border-transparent focus:border-stone-100 transition-all">
+                    <textarea id="log-input-2" placeholder="How would you apply this in the real world?" rows="3" class="w-full bg-stone-50 p-4 rounded-2xl mb-4 text-sm focus:outline-none border-2 border-transparent focus:border-stone-100 transition-all"></textarea>
+                    <button onclick="saveLog('pm')" class="w-full py-4 bg-stone-900 text-white rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-all">Store my learning</button>
+                </div>
+                <div id="pm-list-container" class="space-y-3"></div>
+            </div>
+
+            <!-- Job Logs -->
+            <div id="job-log-section" class="hidden space-y-4">
+                <div class="bg-white p-6 rounded-3xl border border-stone-100 shadow-sm">
+                    <h4 class="text-xs font-bold text-stone-400 mb-4 uppercase tracking-widest">Finding the path...</h4>
+                    <input type="text" id="job-input-1" placeholder="Which company caught your eye?" class="w-full bg-stone-50 p-4 rounded-2xl mb-3 text-sm focus:outline-none border-2 border-transparent focus:border-stone-100 transition-all">
+                    <input type="text" id="job-input-2" placeholder="What's the role?" class="w-full bg-stone-50 p-4 rounded-2xl mb-4 text-sm focus:outline-none border-2 border-transparent focus:border-stone-100 transition-all">
+                    <button onclick="saveLog('job')" class="w-full py-4 bg-stone-900 text-white rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-all">Track this journey</button>
+                </div>
+                <div id="job-list-container" class="space-y-3"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Bottom Nav -->
+    <nav class="fixed bottom-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-t border-stone-100 pb-safe shadow-2xl">
+        <div class="flex justify-around items-center px-4 py-3">
+            <button onclick="navigate('home')" id="nav-home" class="flex flex-col items-center gap-1 transition-transform active:scale-90"><div class="text-xl text-orange-500">🏠</div><span class="text-[9px] font-bold text-stone-800">Today</span></button>
+            <button onclick="navigate('schedule')" id="nav-schedule" class="flex flex-col items-center gap-1 transition-transform active:scale-90"><div class="text-xl text-stone-300">📅</div><span class="text-[9px] font-bold text-stone-400">Timeline</span></button>
+            <button onclick="navigate('progress')" id="nav-progress" class="flex flex-col items-center gap-1 transition-transform active:scale-90"><div class="text-xl text-stone-300">📈</div><span class="text-[9px] font-bold text-stone-400">Stats</span></button>
+            <button onclick="navigate('logs')" id="nav-logs" class="flex flex-col items-center gap-1 transition-transform active:scale-90"><div class="text-xl text-stone-300">📝</div><span class="text-[9px] font-bold text-stone-400">Notes</span></button>
+        </div>
+    </nav>
+
+    <script type="module">
+        import { doc, setDoc, onSnapshot, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Initial State (Local Fallback) ---
+        let appState = {
+            habits: [
+                { name: 'Movement', goal: '60m', days: [false, false, false, false, false], icon: '🧘' },
+                { name: 'French Fluency', goal: '1 Lesson', days: [false, false, false, false, false], icon: '🇫🇷' },
+                { name: 'PM Bootcamp', goal: '2h Mastery', days: [false, false, false, false, false], icon: '🚀' },
+                { name: 'Future Search', goal: '1.5h Focus', days: [false, false, false, false, false], icon: '💼' }
+            ],
+            wellness: { stress: [0,0,0,0,0], energy: [0,0,0,0,0] },
+            pmLogs: [],
+            jobLogs: []
+        };
+
+        const schedule = [
+            { id: 1, start: "08:00", end: "09:00", name: "Morning Routine", desc: "Body movement and grounding.", cat: "Health" },
+            { id: 2, start: "09:00", end: "10:30", name: "Career Focus", desc: "Strategic searching & outreach.", cat: "Job" },
+            { id: 3, start: "10:30", end: "11:45", name: "Language Study", desc: "French immersion or grammar.", cat: "French" },
+            { id: 4, start: "11:45", end: "13:20", name: "Digital Sunset", desc: "Rest and nourishment. No screens.", cat: "Rest" },
+            { id: 5, start: "13:20", end: "15:20", name: "PM Bootcamp", desc: "Mastering methodology & cases.", cat: "PM" },
+            { id: 6, start: "15:20", end: "17:00", name: "Flex Zone", desc: "Freedom to catch up or relax.", cat: "Flex" }
+        ];
+
+        // --- Firebase Logic ---
+        window.startDataSync = (uid) => {
+            const { db, appId } = window.firebaseStore;
+            
+            // Sync Habits & Wellness
+            onSnapshot(doc(db, 'artifacts', appId, 'users', uid, 'settings', 'main'), (snap) => {
+                if (snap.exists()) {
+                    const data = snap.data();
+                    if (data.habits) appState.habits = data.habits;
+                    if (data.wellness) appState.wellness = data.wellness;
+                    renderHabitCards();
+                    updateCharts();
+                }
+            });
+
+            // Sync Logs
+            onSnapshot(collection(db, 'artifacts', appId, 'users', uid, 'pm_logs'), (snap) => {
+                appState.pmLogs = snap.docs.map(d => d.data()).sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+                renderLogs();
+            });
+
+            onSnapshot(collection(db, 'artifacts', appId, 'users', uid, 'job_logs'), (snap) => {
+                appState.jobLogs = snap.docs.map(d => d.data()).sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+                renderLogs();
+            });
+        };
+
+        // --- Actions ---
+        window.toggleHabit = async (hIdx, dIdx) => {
+            const user = window.firebaseStore.user;
+            if (!user) return;
+            appState.habits[hIdx].days[dIdx] = !appState.habits[hIdx].days[dIdx];
+            // Optimistic update
+            renderHabitCards(); 
+            updateCharts();
+            // Cloud Save
+            await setDoc(doc(window.firebaseStore.db, 'artifacts', window.firebaseStore.appId, 'users', user.uid, 'settings', 'main'), { habits: appState.habits }, { merge: true });
+        };
+
+        window.logWellness = async (stress, energy) => {
+            const user = window.firebaseStore.user;
+            if (!user) return;
+            const dayIdx = Math.max(0, Math.min(4, new Date().getDay() - 1));
+            appState.wellness.stress[dayIdx] = stress;
+            appState.wellness.energy[dayIdx] = energy;
+            updateCharts(); // Optimistic
+            await setDoc(doc(window.firebaseStore.db, 'artifacts', window.firebaseStore.appId, 'users', user.uid, 'settings', 'main'), { wellness: appState.wellness }, { merge: true });
+        };
+
+        window.saveLog = async (type) => {
+            const user = window.firebaseStore.user;
+            if (!user) return;
+            const v1 = document.getElementById(type === 'pm' ? 'log-input-1' : 'job-input-1').value;
+            const v2 = document.getElementById(type === 'pm' ? 'log-input-2' : 'job-input-2').value;
+            if (!v1) return;
+            const col = type === 'pm' ? 'pm_logs' : 'job_logs';
+            const data = type === 'pm' ? { topic: v1, note: v2, createdAt: serverTimestamp() } : { company: v1, role: v2, status: "Planned", createdAt: serverTimestamp() };
+            
+            await addDoc(collection(window.firebaseStore.db, 'artifacts', window.firebaseStore.appId, 'users', user.uid, col), data);
+            
+            // Clear inputs
+            document.getElementById(type === 'pm' ? 'log-input-1' : 'job-input-1').value = '';
+            document.getElementById(type === 'pm' ? 'log-input-2' : 'job-input-2').value = '';
+        };
+
+        // --- Navigation ---
+        window.navigate = (view) => {
+            ['home', 'schedule', 'progress', 'logs'].forEach(v => {
+                document.getElementById(`view-${v}`).classList.add('hidden');
+                const btn = document.getElementById(`nav-${v}`);
+                btn.querySelector('div').classList.replace('text-orange-500', 'text-stone-300');
+                btn.querySelector('span').classList.replace('text-stone-800', 'text-stone-400');
+            });
+            document.getElementById(`view-${view}`).classList.remove('hidden');
+            const ab = document.getElementById(`nav-${view}`);
+            ab.querySelector('div').classList.replace('text-stone-300', 'text-orange-500');
+            ab.querySelector('span').classList.replace('text-stone-400', 'text-stone-800');
+            document.getElementById('header-view-title').innerText = view === 'home' ? 'Today' : view.charAt(0).toUpperCase() + view.slice(1);
+            if (view === 'progress') updateCharts();
+        };
+
+        window.toggleLogType = (type) => {
+            document.getElementById('pm-log-section').classList.toggle('hidden', type !== 'pm');
+            document.getElementById('job-log-section').classList.toggle('hidden', type !== 'job');
+            const activeClass = "flex-1 py-3 rounded-xl text-[10px] font-bold bg-white text-stone-800 shadow-sm transition-all";
+            const inactiveClass = "flex-1 py-3 rounded-xl text-[10px] font-bold text-stone-400 transition-all";
+            document.getElementById('log-btn-pm').className = type === 'pm' ? activeClass : inactiveClass;
+            document.getElementById('log-btn-job').className = type === 'job' ? activeClass : inactiveClass;
+        };
+
+        // --- Renderers ---
+        const renderHabitCards = () => {
+            const cont = document.getElementById('mobile-habit-list');
+            if (!cont) return;
+            cont.innerHTML = appState.habits.map((h, i) => `
+                <div class="flex items-center justify-between p-5 bg-white rounded-3xl border border-stone-100 shadow-sm">
+                    <div class="flex items-center gap-4"><span class="text-3xl">${h.icon}</span><div><span class="block text-sm font-bold text-stone-700">${h.name}</span><span class="block text-[10px] text-stone-400 uppercase tracking-tighter">${h.goal}</span></div></div>
+                    <div class="flex gap-1.5">${h.days.map((d, di) => `<div onclick="toggleHabit(${i}, ${di})" class="w-7 h-7 rounded-lg border-2 flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all ${d ? 'bg-orange-50 border-orange-200 text-orange-600' : 'bg-stone-50 border-stone-100 text-stone-300'}">${['M','T','W','T','F'][di]}</div>`).join('')}</div>
+                </div>
+            `).join('');
+        };
+
+        const renderLogs = () => {
+            const pc = document.getElementById('pm-list-container');
+            const jc = document.getElementById('job-list-container');
+            if (pc) pc.innerHTML = appState.pmLogs.map(l => `<div class="bg-white p-5 rounded-3xl border border-stone-100 shadow-sm"><h5 class="font-bold text-sm text-stone-700 serif italic">${l.topic}</h5><p class="text-xs text-stone-500 mt-2 leading-relaxed">${l.note}</p></div>`).join('');
+            if (jc) jc.innerHTML = appState.jobLogs.map(l => `<div class="bg-white p-5 rounded-3xl border border-stone-100 shadow-sm flex justify-between items-center"><div><h5 class="font-bold text-sm text-stone-700 serif italic">${l.company}</h5><p class="text-xs text-stone-400">${l.role}</p></div><span class="text-[9px] bg-stone-50 px-3 py-1 rounded-full font-bold text-stone-500 uppercase tracking-widest border border-stone-100">${l.status}</span></div>`).join('');
+        };
+
+        const updateActiveTask = () => {
+            const now = new Date();
+            const time = now.getHours() + ":" + now.getMinutes().toString().padStart(2, '0');
+            const current = schedule.find(s => time >= s.start && time < s.end) || { name: "Sunset Review", desc: "Hard boundary. Rest and unplug for the day." };
+            document.getElementById('active-task-name').innerText = current.name;
+            document.getElementById('active-task-desc').innerText = current.desc;
+            renderTimeline(current.id);
+        };
+
+        const renderTimeline = (activeId) => {
+            const cont = document.getElementById('timeline-container');
+            if (!cont) return;
+            cont.innerHTML = schedule.map(s => `
+                <div class="flex items-center gap-5 ${s.id === activeId ? 'opacity-100' : 'opacity-30'} transition-all">
+                    <div class="w-12 text-[10px] font-bold text-stone-400 font-mono">${s.start}</div>
+                    <div class="flex-1 bg-white p-5 rounded-3xl border-2 ${s.id === activeId ? 'border-orange-200 shadow-lg shadow-orange-100/50' : 'border-stone-50'} transition-all"><span class="text-sm font-bold text-stone-700 serif italic">${s.name}</span><p class="text-[10px] text-stone-400 mt-1">${s.desc}</p></div>
+                </div>
+            `).join('');
+        };
+
+        let cc, wc;
+        const updateCharts = () => {
+            if (!cc) {
+                const ctx = document.getElementById('consistencyChart').getContext('2d');
+                cc = new Chart(ctx, { type: 'bar', data: { labels: ['M','T','W','T','F'], datasets: [{ data: [0,0,0,0,0], backgroundColor: '#F97316', borderRadius: 12 }] }, options: { maintainAspectRatio: false, scales: { y: { display: false, max: 4 }, x: { grid: { display: false } } }, plugins: { legend: { display: false } } } });
+            }
+            if (!wc) {
+                const ctx = document.getElementById('wellnessChart').getContext('2d');
+                wc = new Chart(ctx, { type: 'line', data: { labels: ['M','T','W','T','F'], datasets: [{ label: 'Energy', data: [0,0,0,0,0], borderColor: '#F97316', tension: 0.4, fill: true, backgroundColor: 'rgba(249, 115, 22, 0.05)' }, { label: 'Balance', data: [0,0,0,0,0], borderColor: '#444', borderDash: [5,5], tension: 0.4 }] }, options: { maintainAspectRatio: false, scales: { y: { display: false, max: 10 }, x: { grid: { display: false } } }, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } } } });
+            }
+            const daily = [0,0,0,0,0];
+            appState.habits.forEach(h => h.days.forEach((d, i) => { if(d) daily[i]++; }));
+            cc.data.datasets[0].data = daily; cc.update();
+            wc.data.datasets[0].data = appState.wellness.energy; wc.data.datasets[1].data = appState.wellness.stress; wc.update();
+        };
+
+        window.onload = () => {
+            updateActiveTask();
+            renderHabitCards();
+            renderLogs();
+            setInterval(updateActiveTask, 60000);
+        };
+    </script>
+</body>
+</html>
