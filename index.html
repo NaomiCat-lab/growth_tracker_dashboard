@@ -22,7 +22,15 @@ index.html
             appId: typeof __app_id !== 'undefined' ? __app_id : 'default-app-id' 
         };
 
-        const firebaseConfig = JSON.parse(__firebase_config);
+        const firebaseConfig = {
+  apiKey: "AIzaSyDHktuKfyQf090Gx0bgyjD1V1YdUSQT1cU",
+  authDomain: "growth-tracker-e7b50.firebaseapp.com",
+  projectId: "growth-tracker-e7b50",
+  storageBucket: "growth-tracker-e7b50.firebasestorage.app",
+  messagingSenderId: "56700551480",
+  appId: "1:56700551480:web:250716a346582094f241cd",
+  measurementId: "G-8HGFLTLGEE"
+};
         const app = initializeApp(firebaseConfig);
         window.firebaseStore.auth = getAuth(app);
         window.firebaseStore.db = getFirestore(app);
