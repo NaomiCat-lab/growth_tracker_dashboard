@@ -30,6 +30,7 @@
   // flags for safe sync start
   window.__syncStarted = false;
   window.__pendingSyncUid = null;
+  window.__unsubs = window.__unsubs || [];
 
   const firebaseConfig = {
     apiKey: "AIzaSyDHktuKfyQf090Gx0bgyjD1V1YdUSQT1cU",
@@ -69,45 +70,49 @@
   };
 
   onAuthStateChanged(auth, (user) => {
-    window.firebaseStore.user = user;
+  window.firebaseStore.user = user;
+const statusEl = document.getElementById("cloud-status");
+const loginBtn = document.getElementById("btn-login");
+const logoutBtn = document.getElementById("btn-logout");
 
-    const statusEl = document.getElementById("cloud-status");
-    const loginBtn = document.getElementById("btn-login");
-    const logoutBtn = document.getElementById("btn-logout");
+if (statusEl) {
+  if (user) {
+    statusEl.innerText = "Cloud Sync Active";
+    statusEl.classList.remove("text-stone-400");
+    statusEl.classList.add("text-green-500");
+  } else {
+    statusEl.innerText = "Not signed in";
+    statusEl.classList.remove("text-green-500");
+    statusEl.classList.add("text-stone-400");
+  }
+}
+if (loginBtn) loginBtn.classList.toggle("hidden", !!user);
+if (logoutBtn) logoutBtn.classList.toggle("hidden", !user);
 
-    if (statusEl) {
-      if (user) {
-        statusEl.innerText = "Cloud Sync Active";
-        statusEl.classList.remove("text-stone-400");
-        statusEl.classList.add("text-green-500");
-      } else {
-        statusEl.innerText = "Not signed in";
-        statusEl.classList.remove("text-green-500");
-        statusEl.classList.add("text-stone-400");
+
+  // ✅ login => start sync immediately (or stash uid)
+  if (user) {
+    if (typeof window.startDataSync === "function") {
+      if (!window.__syncStarted) {
+        window.__syncStarted = true;
+        window.startDataSync(user.uid);
       }
+    } else {
+      window.__pendingSyncUid = user.uid;
     }
+  } 
+  // ✅ logout => reset + unsubscribe listeners
+  else {
+    window.__syncStarted = false;
+    window.__pendingSyncUid = null;
 
-    if (loginBtn) loginBtn.classList.toggle("hidden", !!user);
-    if (logoutBtn) logoutBtn.classList.toggle("hidden", !user);
-
-    // ✅ Login => start sync immediately if ready, else stash uid
-    if (user) {
-      if (typeof window.startDataSync === "function") {
-        if (!window.__syncStarted) {
-          window.__syncStarted = true;
-          window.startDataSync(user.uid);
-        }
-      } else {
-        window.__pendingSyncUid = user.uid;
-      }
+    if (window.__unsubs?.length) {
+      window.__unsubs.forEach((fn) => fn && fn());
+      window.__unsubs = [];
     }
+  }
+});
 
-    // ✅ Logout => reset flags
-    if (!user) {
-      window.__syncStarted = false;
-      window.__pendingSyncUid = null;
-    }
-  });
 </script>
 
 
@@ -328,28 +333,80 @@
 
         // --- Firebase Logic ---
         window.startDataSync = (uid) => {
-            const { db, appId } = window.firebaseStore;
+            // ✅ prevent duplicate listeners
+if (window.__unsubs?.length) {
+  window.__unsubs.forEach((fn) => fn && fn());
+  window.__unsubs = [];
+}
+const { db, appId } = window.firebaseStore;
             
             // Sync Habits & Wellness
-            onSnapshot(doc(db, 'artifacts', appId, 'users', uid, 'settings', 'main'), (snap) => {
-                if (snap.exists()) {
-                    const data = snap.data();
-                    if (data.habits) appState.habits = data.habits;
-                    if (data.wellness) appState.wellness = data.wellness;
-                    renderHabitCards();
-                    updateCharts();
-                }
-            });
+            onSnapshot(doc(db, 'artifacts', appId, 'users', uid, 'settings', 'main'), async (snap) => {
+  if (snap.exists()) {
+    const data = snap.data();
+    if (data.habits) appState.habits = data.habits;
+    if (data.wellness) appState.wellness = data.wellness;
+    renderHabitCards();
+    updateCharts();
+  } else {
+    // ✅ 首次登入：雲端沒有資料 => 把本機初始值寫上去，確保刷新後看得到
+    try {
+      await setDoc(
+        doc(db, 'artifacts', appId, 'users', uid, 'settings', 'main'),
+        { habits: appState.habits, wellness: appState.wellness },
+        { merge: true }
+      );
+    } catch (e) {
+      console.error("Init settings failed:", e);
+    }
+  }
+});
+
 
             // Sync Logs
-            onSnapshot(collection(db, 'artifacts', appId, 'users', uid, 'pm_logs'), (snap) => {
-                appState.pmLogs = snap.docs.map(d => d.data()).sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-                renderLogs();
-            });
+           // Sync Habits & Wellness
+const unSettings = onSnapshot(
+  doc(db, 'artifacts', appId, 'users', uid, 'settings', 'main'),
+  async (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      if (data.habits) appState.habits = data.habits;
+      if (data.wellness) appState.wellness = data.wellness;
+      renderHabitCards();
+      updateCharts();
+    } else {
+      try {
+        await setDoc(
+          doc(db, 'artifacts', appId, 'users', uid, 'settings', 'main'),
+          { habits: appState.habits, wellness: appState.wellness },
+          { merge: true }
+        );
+      } catch (e) {
+        console.error("Init settings failed:", e);
+      }
+    }
+  }
+);
 
-            onSnapshot(collection(db, 'artifacts', appId, 'users', uid, 'job_logs'), (snap) => {
-                appState.jobLogs = snap.docs.map(d => d.data()).sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-                renderLogs();
+// Sync Logs
+const unPm = onSnapshot(
+  collection(db, 'artifacts', appId, 'users', uid, 'pm_logs'),
+  (snap) => {
+    appState.pmLogs = snap.docs.map(d => d.data()).sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+    renderLogs();
+  }
+);
+
+const unJob = onSnapshot(
+  collection(db, 'artifacts', appId, 'users', uid, 'job_logs'),
+  (snap) => {
+    appState.jobLogs = snap.docs.map(d => d.data()).sort((a,b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+    renderLogs();
+  }
+);
+
+// ✅ 最重要：把這三個 unsubscribe 存起來，登出才能真的清掉 listener
+window.__unsubs = [unSettings, unPm, unJob];
             });
         };
         // ✅ If auth already fired before startDataSync existed, start sync now.
