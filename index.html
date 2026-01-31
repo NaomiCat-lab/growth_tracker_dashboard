@@ -10,16 +10,9 @@ index.html
     
     <!-- Firebase SDKs -->
 <script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import {
-  getAuth,
-  onAuthStateChanged,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut
-} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-
-window.__syncStarted = false;
-
+    getAuth,
     onAuthStateChanged,
     GoogleAuthProvider,
     signInWithPopup,
@@ -34,6 +27,10 @@ window.__syncStarted = false;
     user: null,
     appId: "growth-tracker-e7b50"
   };
+
+  // flags for safe sync start
+  window.__syncStarted = false;
+  window.__pendingSyncUid = null;
 
   const firebaseConfig = {
     apiKey: "AIzaSyDHktuKfyQf090Gx0bgyjD1V1YdUSQT1cU",
@@ -52,7 +49,7 @@ window.__syncStarted = false;
   window.firebaseStore.auth = auth;
   window.firebaseStore.db = db;
 
-  // 讓 HTML onclick 可以呼叫
+  // HTML onclick handlers
   window.login = async () => {
     try {
       const provider = new GoogleAuthProvider();
@@ -94,15 +91,23 @@ window.__syncStarted = false;
     if (loginBtn) loginBtn.classList.toggle("hidden", !!user);
     if (logoutBtn) logoutBtn.classList.toggle("hidden", !user);
 
-    // 只有登入成功才開始同步
-  if (user && typeof startDataSync === "function" && !window.__syncStarted) {
-  window.__syncStarted = true;
-  startDataSync(user.uid);
-}
-if (!user) {
-  window.__syncStarted = false; // 登出後允許下次登入再啟動
-}
+    // ✅ Login => start sync immediately if ready, else stash uid
+    if (user) {
+      if (typeof window.startDataSync === "function") {
+        if (!window.__syncStarted) {
+          window.__syncStarted = true;
+          window.startDataSync(user.uid);
+        }
+      } else {
+        window.__pendingSyncUid = user.uid;
+      }
+    }
 
+    // ✅ Logout => reset flags
+    if (!user) {
+      window.__syncStarted = false;
+      window.__pendingSyncUid = null;
+    }
   });
 </script>
 
@@ -348,6 +353,16 @@ if (!user) {
                 renderLogs();
             });
         };
+        // ✅ If auth already fired before startDataSync existed, start sync now.
+if (!window.__syncStarted) {
+  const uid = window.firebaseStore?.user?.uid || window.__pendingSyncUid;
+  if (uid) {
+    window.__syncStarted = true;
+    window.__pendingSyncUid = null;
+    window.startDataSync(uid);
+  }
+}
+
 
         // --- Actions ---
         window.toggleHabit = async (hIdx, dIdx) => {
