@@ -407,7 +407,6 @@ const unJob = onSnapshot(
 
 // ✅ 最重要：把這三個 unsubscribe 存起來，登出才能真的清掉 listener
 window.__unsubs = [unSettings, unPm, unJob];
-            });
         };
         // ✅ If auth already fired before startDataSync existed, start sync now.
 if (!window.__syncStarted) {
